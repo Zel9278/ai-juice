@@ -1,0 +1,19 @@
+[Unit]
+Description=ai-juice (Ai bot for Juice Server)
+After=network.target
+
+[Service]
+Type=simple
+User=ai
+WorkingDirectory=/home/ai/ai-juice
+ExecStart=/home/ai/.local/share/pnpm/bin/node ./built
+Environment="PNPM_HOME=/home/ai/.local/share/pnpm"
+Environment="PATH=/home/ai/.local/share/pnpm:/home/ai/.local/share/pnpm/bin:/usr/local/bin:/usr/bin:/bin"
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ai-juice
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
