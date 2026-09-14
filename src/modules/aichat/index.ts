@@ -6,6 +6,7 @@ import config from '@/config.js';
 import Friend from '@/friend.js';
 import urlToBase64 from '@/utils/url2base64.js';
 import urlToJson from '@/utils/url2json.js';
+import buildDocsContext from '@/modules/aichat/docsContext.js';
 import got from 'got';
 import loki from 'lokijs';
 
@@ -760,6 +761,13 @@ export default class extends Module {
 							.replace(reKigoType, '')
 							.replace(GROUNDING_TARGET, '')
 							.trim();
+
+		// 質問内容にdocs.mk-juice.devの関連ページがあれば、内容をシステムプロンプトに追記する
+		const docsContext = await buildDocsContext(question);
+		if (docsContext) {
+			prompt += '\n\n' + docsContext;
+		}
+
 		switch (exist.type) {
 			case TYPE_GEMINI:
 				// geminiの場合、APIキーが必須
