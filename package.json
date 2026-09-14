@@ -39,6 +39,9 @@
 	},
 	"devDependencies": {
 	},
+	"pnpm": {
+		"onlyBuiltDependencies": ["canvas"]
+	},
 	"nodemonConfig": {
     "ignore": ["memory.json"]
   }
