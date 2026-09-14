@@ -49,6 +49,14 @@ type GeminiOptions = {
 	tools?: [{}]
 };
 
+type OpenAiContentPart =
+	| { type: 'text'; text: string }
+	| { type: 'image_url'; image_url: { url: string } };
+type OpenAiMessage = {
+	role: string;
+	content: string | OpenAiContentPart[];
+};
+
 type AiChatHist = {
 	postId: string;
 	createdAt: number;
@@ -84,12 +92,15 @@ const TYPE_GEMINI = 'gemini';
 const GEMINI_PRO = 'gemini-pro';
 const GEMINI_FLASH = 'gemini-flash';
 const TYPE_PLAMO = 'plamo';
+const TYPE_OPENAI = 'openai';
 const GROUNDING_TARGET = 'ggg';
 
 const GEMINI_20_FLASH_API = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
 // const GEMINI_15_FLASH_API = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
 const GEMINI_15_PRO_API = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent';
 const PLAMO_API = 'https://platform.preferredai.jp/api/completion/v1/chat/completions';
+const OPENAI_DEFAULT_API = 'https://api.openai.com/v1/chat/completions';
+const OPENAI_DEFAULT_MODEL = 'gpt-4o-mini';
 
 const RANDOMTALK_DEFAULT_PROBABILITY = 0.02;// デフォルトのrandomTalk確率
 const TIMEOUT_TIME = 1000 * 60 * 60 * 0.5;// aichatの返信を監視する時間
@@ -345,6 +356,120 @@ export default class extends Module {
 	}
 
 	@bindThis
+	private async genTextByOpenAI(aiChat: AiChat, files: base64File[]) {
+		this.log('Generate Text By OpenAI-compatible API...');
+		const now = new Date().toLocaleString('ja-JP', {
+			timeZone: 'Asia/Tokyo',
+			year: 'numeric',
+			month: '2-digit',
+			day: '2-digit',
+			hour: '2-digit',
+			minute: '2-digit'
+		});
+		let systemPrompt = aiChat.prompt + 'また、現在日時は' + now + 'であり、これは回答の参考にし、時刻を聞かれるまで時刻情報は提供しないこと(なお、他の日時は無効とすること)。';
+		if (aiChat.friendName != undefined) {
+			systemPrompt += 'なお、会話相手の名前は' + aiChat.friendName + 'とする。';
+		}
+		if (!aiChat.fromMention) {
+			systemPrompt += 'これらのメッセージは、あなたに対するメッセージではないことを留意し、返答すること(会話相手は突然話しかけられた認識している)。';
+		}
+		// URLから情報を取得
+		if (aiChat.question !== undefined) {
+			const urlexp = RegExp('(https?://[a-zA-Z0-9!?/+_~=:;.,*&@#$%\'-]+)', 'g');
+			const urlarray = [...aiChat.question.matchAll(urlexp)];
+			if (urlarray.length > 0) {
+				for (const url of urlarray) {
+					this.log('URL:' + url[0]);
+					let result: unknown = null;
+					try {
+						result = await urlToJson(url[0]);
+					} catch (err: unknown) {
+						systemPrompt += '補足として提供されたURLは無効でした:URL=>' + url[0]
+						this.log('Skip url becase error in urlToJson');
+						continue;
+					}
+					const urlpreview: UrlPreview = result as UrlPreview;
+					if (urlpreview.title) {
+						systemPrompt +=
+							'補足として提供されたURLの情報は次の通り:URL=>' + urlpreview.url
+							+'サイト名('+urlpreview.sitename+')、';
+						if (!urlpreview.sensitive) {
+							systemPrompt +=
+							'タイトル('+urlpreview.title+')、'
+							+ '説明('+urlpreview.description+')、'
+							+ '質問にあるURLとサイト名・タイトル・説明を組み合わせ、回答の参考にすること。'
+							;
+						} else {
+							systemPrompt +=
+							'これはセンシティブなURLの可能性があるため、質問にあるURLとサイト名のみで、回答の参考にすること(使わなくても良い)。'
+							;
+						}
+					}
+				}
+			}
+		}
+
+		let messages: OpenAiMessage[] = [{ role: 'system', content: systemPrompt }];
+		if (aiChat.history != null) {
+			aiChat.history.forEach(entry => {
+				messages.push({
+					role: entry.role === 'model' ? 'assistant' : entry.role,
+					content: entry.content,
+				});
+			});
+		}
+
+		// 画像ファイルはvision対応モデル向けにimage_urlとして添付(画像以外は非対応)
+		const imageParts: OpenAiContentPart[] = files
+			.filter(file => file.type.startsWith('image/'))
+			.map(file => ({
+				type: 'image_url' as const,
+				image_url: { url: `data:${file.type};base64,${file.base64}` },
+			}));
+		if (imageParts.length > 0) {
+			messages.push({
+				role: 'user',
+				content: [{ type: 'text', text: aiChat.question }, ...imageParts],
+			});
+		} else {
+			messages.push({ role: 'user', content: aiChat.question });
+		}
+
+		let options = {
+			url: aiChat.api,
+			headers: {
+				Authorization: 'Bearer ' + aiChat.key,
+			},
+			json: {
+				model: config.openaiModel ?? OPENAI_DEFAULT_MODEL,
+				messages: messages,
+			},
+		};
+		this.log(JSON.stringify(options));
+		let res_data: any = null;
+		try {
+			res_data = await got.post(options,
+				{parseJson: (res: string) => JSON.parse(res)}).json();
+			this.log(JSON.stringify(res_data));
+			if (res_data.hasOwnProperty('choices')) {
+				if (res_data.choices.length > 0) {
+					if (res_data.choices[0].hasOwnProperty('message')) {
+						if (res_data.choices[0].message.hasOwnProperty('content')) {
+							return res_data.choices[0].message.content;
+						}
+					}
+				}
+			}
+		} catch (err: unknown) {
+			this.log('Error By Call OpenAI-compatible API');
+			if (err instanceof Error) {
+				this.log(`${err.name}\n${err.message}\n${err.stack}`);
+			}
+		}
+		return null;
+	}
+
+	@bindThis
 	private async note2base64File(notesId: string) {
 		const noteData = await this.ai.api('notes/show', { noteId: notesId });
 		let files:base64File[] = [];
@@ -405,14 +530,12 @@ export default class extends Module {
 			}
 		}
 
-		// タイプを決定
-		let type = TYPE_GEMINI;
+		// タイプを決定(キーワード指定が無い場合のデフォルトはopenai)
+		let type = TYPE_OPENAI;
 		if (msg.includes([KIGO + TYPE_GEMINI])) {
 			type = TYPE_GEMINI;
-		} else if (msg.includes([KIGO + 'chatgpt4'])) {
-			type = 'chatgpt4';
-		} else if (msg.includes([KIGO + 'chatgpt'])) {
-			type = 'chatgpt3.5';
+		} else if (msg.includes([KIGO + TYPE_OPENAI]) || msg.includes([KIGO + 'chatgpt4']) || msg.includes([KIGO + 'chatgpt'])) {
+			type = TYPE_OPENAI;
 		} else if (msg.includes([KIGO + TYPE_PLAMO])) {
 			type = TYPE_PLAMO;
 		}
@@ -569,7 +692,7 @@ export default class extends Module {
 		const current : AiChatHist = {
 			postId: choseNote.id,
 			createdAt: Date.now(),// 適当なもの
-			type: TYPE_GEMINI,		// 別のAPIをデフォルトにしてもよい
+			type: TYPE_OPENAI,		// 別のAPIをデフォルトにしてもよい
 			fromMention: false,		// ランダムトークの場合はfalseとする
 		};
 		// AIに問い合わせ
@@ -597,6 +720,10 @@ export default class extends Module {
 		}
 		const reName = RegExp(this.name, 'i');
 		let reKigoType = RegExp(KIGO + exist.type, 'i');
+		// openaiタイプは&openai/&chatgpt/&chatgpt4のいずれでも呼び出せるため、質問文からまとめて除去する
+		if (exist.type === TYPE_OPENAI) {
+			reKigoType = RegExp(`${KIGO}(${TYPE_OPENAI}|chatgpt4|chatgpt)`, 'i');
+		}
 		const extractedText = msg.extractedText;
 		if (extractedText == undefined || extractedText.length == 0) return false;
 
@@ -675,6 +802,25 @@ export default class extends Module {
 					fromMention: exist.fromMention
 				};
 				text = await this.genTextByPLaMo(aiChat);
+				break;
+
+			case TYPE_OPENAI:
+				// OpenAI互換APIの場合、APIキーが必須
+				if (!config.openaiApiKey) {
+					msg.reply(serifs.aichat.nothing(exist.type));
+					return false;
+				}
+				const openaiFiles: base64File[] = await this.note2base64File(msg.id);
+				aiChat = {
+					question: question,
+					prompt: prompt,
+					api: config.openaiApiUrl ?? OPENAI_DEFAULT_API,
+					key: config.openaiApiKey,
+					history: exist.history,
+					friendName: friendName,
+					fromMention: exist.fromMention
+				};
+				text = await this.genTextByOpenAI(aiChat, openaiFiles);
 				break;
 
 			default:
