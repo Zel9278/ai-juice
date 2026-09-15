@@ -20,6 +20,8 @@ type AiChat = {
 	friendName?: string;
 	grounding?: boolean;
 	history?: { role: string; content: string }[];
+	// 本文中に登場したカスタム絵文字のショートコード(添付画像との対応付け用)
+	emojiNames?: string[];
 };
 type base64File = {
 	type: string;
@@ -180,6 +182,10 @@ export default class extends Module {
 		// グラウンディングについてもsystemInstructionTextに追記(こうしないとあまり使わないので)
 		if (aiChat.grounding) {
 			systemInstructionText += '返答のルール2:Google search with grounding.';
+		}
+		// 本文中のカスタム絵文字を画像として添付している場合、対応関係を伝えておく
+		if (aiChat.emojiNames != undefined && aiChat.emojiNames.length > 0) {
+			systemInstructionText += '添付されている画像のうち、' + aiChat.emojiNames.map(n => `:${n}:`).join('、') + 'は、本文中に登場するカスタム絵文字の画像です。絵文字の見た目や内容について聞かれた場合は、これらの画像を参考にして答えてください。';
 		}
 		// URLから情報を取得
 		if (aiChat.question !== undefined) {
@@ -385,6 +391,10 @@ export default class extends Module {
 		if (!aiChat.fromMention) {
 			systemPrompt += 'これらのメッセージは、あなたに対するメッセージではないことを留意し、返答すること(会話相手は突然話しかけられた認識している)。';
 		}
+		// 本文中のカスタム絵文字を画像として添付している場合、対応関係を伝えておく
+		if (aiChat.emojiNames != undefined && aiChat.emojiNames.length > 0) {
+			systemPrompt += '添付されている画像のうち、' + aiChat.emojiNames.map(n => `:${n}:`).join('、') + 'は、本文中に登場するカスタム絵文字の画像です。絵文字の見た目や内容について聞かれた場合は、これらの画像を参考にして答えてください。';
+		}
 		// URLから情報を取得
 		if (aiChat.question !== undefined) {
 			const urlexp = RegExp('(https?://[a-zA-Z0-9!?/+_~=:;.,*&@#$%\'-]+)', 'g');
@@ -544,6 +554,43 @@ export default class extends Module {
 			}
 		}
 		return files;
+	}
+
+	@bindThis
+	private async resolveEmojiImages(text: string): Promise<{ file: base64File; name: string }[]> {
+		// :name: または :name@host: 形式のカスタム絵文字ショートコードを抽出(重複除去、上限あり)
+		const EMOJI_SHORTCODE_REGEX = /:([a-zA-Z0-9_+-]+)(?:@([a-zA-Z0-9.-]+))?:/g;
+		const MAX_EMOJIS = 4; // プロンプト肥大化・レイテンシ増加を防ぐための上限
+		const seen = new Set<string>();
+		const shortcodes: { name: string; host: string | null }[] = [];
+		for (const match of text.matchAll(EMOJI_SHORTCODE_REGEX)) {
+			const name = match[1];
+			const host = match[2] ?? null;
+			const key = `${name}@${host ?? ''}`;
+			if (seen.has(key)) continue;
+			seen.add(key);
+			shortcodes.push({ name, host });
+			if (shortcodes.length >= MAX_EMOJIS) break;
+		}
+		if (shortcodes.length === 0) return [];
+
+		const results: { file: base64File; name: string }[] = [];
+		for (const { name, host } of shortcodes) {
+			try {
+				const emoji: any = await this.ai.api('emoji', host ? { name, host } : { name });
+				if (!emoji?.url) continue;
+				const base64 = await urlToBase64(emoji.url);
+				// 拡張子から簡易的にMIMEタイプを推定(取得できない場合はpngとして扱う)
+				const ext = emoji.url.split('.').pop()?.split('?')[0]?.toLowerCase();
+				const type = ext === 'gif' ? 'image/gif' : ext === 'webp' ? 'image/webp' : ext === 'apng' ? 'image/apng' : 'image/png';
+				results.push({ file: { type, base64 }, name: host ? `${name}@${host}` : name });
+				this.log(`Resolved emoji :${name}${host ? '@' + host : ''}: -> ${emoji.url}`);
+			} catch (err: unknown) {
+				// 存在しないショートコードや、時刻表記などコロンを含む通常の文章の誤検出はここで無視される
+				this.log(`Could not resolve emoji :${name}${host ? '@' + host : ''}:`);
+			}
+		}
+		return results;
 	}
 
 	@bindThis
@@ -862,7 +909,10 @@ export default class extends Module {
 					return false;
 				}
 				// チャット(DM)の添付ファイルは今のところ未対応(ノートの添付のみ画像として渡す)
-				const base64Files: base64File[] = msg.isChat ? [] : await this.note2base64File(msg.id);
+				const noteFiles: base64File[] = msg.isChat ? [] : await this.note2base64File(msg.id);
+				// 本文中のカスタム絵文字ショートコードを画像として解決し、添付ファイルに加える
+				const geminiEmojis = await this.resolveEmojiImages(question);
+				const base64Files: base64File[] = [...noteFiles, ...geminiEmojis.map(e => e.file)];
 				aiChat = {
 					question: question,
 					prompt: prompt,
@@ -870,7 +920,8 @@ export default class extends Module {
 					key: config.geminiProApiKey,
 					history: exist.history,
 					friendName: friendName,
-					fromMention: exist.fromMention
+					fromMention: exist.fromMention,
+					emojiNames: geminiEmojis.map(e => e.name),
 				};
 				if (exist.api) {
 					aiChat.api = exist.api;
@@ -906,7 +957,10 @@ export default class extends Module {
 					return false;
 				}
 				// チャット(DM)の添付ファイルは今のところ未対応(ノートの添付のみ画像として渡す)
-				const openaiFiles: base64File[] = msg.isChat ? [] : await this.note2base64File(msg.id);
+				const openaiNoteFiles: base64File[] = msg.isChat ? [] : await this.note2base64File(msg.id);
+				// 本文中のカスタム絵文字ショートコードを画像として解決し、添付ファイルに加える
+				const openaiEmojis = await this.resolveEmojiImages(question);
+				const openaiFiles: base64File[] = [...openaiNoteFiles, ...openaiEmojis.map(e => e.file)];
 				aiChat = {
 					question: question,
 					prompt: prompt,
@@ -914,7 +968,8 @@ export default class extends Module {
 					key: config.openaiApiKey,
 					history: exist.history,
 					friendName: friendName,
-					fromMention: exist.fromMention
+					fromMention: exist.fromMention,
+					emojiNames: openaiEmojis.map(e => e.name),
 				};
 				text = await this.genTextByOpenAI(aiChat, openaiFiles);
 				break;
