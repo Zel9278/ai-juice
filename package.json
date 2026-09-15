@@ -9,6 +9,7 @@
 		"test": "jest"
 	},
 	"dependencies": {
+		"@modelcontextprotocol/sdk": "1.29.0",
 		"@types/chalk": "2.2.0",
 		"@types/lokijs": "1.5.14",
 		"@types/node": "22.13.13",

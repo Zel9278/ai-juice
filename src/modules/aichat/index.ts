@@ -7,6 +7,7 @@ import Friend from '@/friend.js';
 import urlToBase64 from '@/utils/url2base64.js';
 import urlToJson from '@/utils/url2json.js';
 import buildDocsContext from '@/modules/aichat/docsContext.js';
+import { listOpenAiTools, callMcpTool } from '@/modules/aichat/mcpClient.js';
 import got from 'got';
 import loki from 'lokijs';
 
@@ -53,9 +54,16 @@ type GeminiOptions = {
 type OpenAiContentPart =
 	| { type: 'text'; text: string }
 	| { type: 'image_url'; image_url: { url: string } };
+type OpenAiToolCall = {
+	id: string;
+	type: 'function';
+	function: { name: string; arguments: string };
+};
 type OpenAiMessage = {
 	role: string;
-	content: string | OpenAiContentPart[];
+	content: string | OpenAiContentPart[] | null;
+	tool_calls?: OpenAiToolCall[];
+	tool_call_id?: string;
 };
 
 type AiChatHist = {
@@ -436,29 +444,55 @@ export default class extends Module {
 			messages.push({ role: 'user', content: aiChat.question });
 		}
 
-		let options = {
-			url: aiChat.api,
-			headers: {
-				Authorization: 'Bearer ' + aiChat.key,
-			},
-			json: {
-				model: config.openaiModel ?? OPENAI_DEFAULT_MODEL,
-				messages: messages,
-			},
-		};
-		this.log(JSON.stringify(options));
-		let res_data: any = null;
+		const tools = await listOpenAiTools();
+		if (tools.length > 0) {
+			this.log(`MCP tools available: ${tools.map(t => t.function.name).join(', ')}`);
+		}
+
+		// ツール呼び出し(function calling)のラウンドトリップ上限。無限ループ防止用
+		const MAX_TOOL_ROUNDS = 5;
 		try {
-			res_data = await got.post(options,
-				{parseJson: (res: string) => JSON.parse(res)}).json();
-			this.log(JSON.stringify(res_data));
-			if (res_data.hasOwnProperty('choices')) {
-				if (res_data.choices.length > 0) {
-					if (res_data.choices[0].hasOwnProperty('message')) {
-						if (res_data.choices[0].message.hasOwnProperty('content')) {
-							return res_data.choices[0].message.content;
-						}
+			for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
+				const isLastRound = round === MAX_TOOL_ROUNDS;
+				let options = {
+					url: aiChat.api,
+					headers: {
+						Authorization: 'Bearer ' + aiChat.key,
+					},
+					json: {
+						model: config.openaiModel ?? OPENAI_DEFAULT_MODEL,
+						messages: messages,
+						// 最終ラウンドはツール呼び出しをさせず、必ずテキストで返答させる
+						...(tools.length > 0 && !isLastRound ? { tools: tools } : {}),
+					},
+				};
+				this.log(JSON.stringify(options));
+				const res_data: any = await got.post(options,
+					{parseJson: (res: string) => JSON.parse(res)}).json();
+				this.log(JSON.stringify(res_data));
+
+				const message = res_data?.choices?.[0]?.message;
+				if (message == null) return null;
+
+				const toolCalls: OpenAiToolCall[] | undefined = message.tool_calls;
+				if (toolCalls == null || toolCalls.length === 0) {
+					return message.content ?? null;
+				}
+
+				// アシスタントのツール呼び出し要求を履歴に積む
+				messages.push({ role: 'assistant', content: message.content ?? null, tool_calls: toolCalls });
+
+				// 各ツールを実行し、結果をtoolロールのメッセージとして積む
+				for (const toolCall of toolCalls) {
+					this.log(`MCP tool call: ${toolCall.function.name}(${toolCall.function.arguments})`);
+					let args: Record<string, unknown> = {};
+					try {
+						args = JSON.parse(toolCall.function.arguments || '{}');
+					} catch {
+						// 引数のJSONが壊れている場合は空引数として扱う
 					}
+					const toolResultText = await callMcpTool(toolCall.function.name, args);
+					messages.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResultText });
 				}
 			}
 		} catch (err: unknown) {
