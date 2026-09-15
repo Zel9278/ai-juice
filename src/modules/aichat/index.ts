@@ -551,17 +551,22 @@ export default class extends Module {
 			this.log('AiChat requested');
 		}
 
-		// msg.idをもとにnotes/conversationを呼び出し、会話中のidかチェック
-		const conversationData = await this.ai.api('notes/conversation', { noteId: msg.id });
+		// チャット(DM)にはノートのようなスレッド概念が無いため、この時点で会話中かどうかは
+		// コア側(ai.ts)のcontexts機構がすでに判定済み(会話中ならcontextHookが呼ばれ、mentionHookはそもそも呼ばれない)。
+		// そのためnotes/conversationによるチェックはノートの場合のみ行う。
+		if (!msg.isChat) {
+			// msg.idをもとにnotes/conversationを呼び出し、会話中のidかチェック
+			const conversationData = await this.ai.api('notes/conversation', { noteId: msg.id });
 
-		// aichatHistに該当のポストが見つかった場合は会話中のためmentionHoonkでは対応しない
-		let exist : AiChatHist | null = null;
-		if (conversationData != undefined) {
-			for (const message of conversationData) {
-				exist = this.aichatHist.findOne({
-					postId: message.id
-				});
-				if (exist != null) return false;
+			// aichatHistに該当のポストが見つかった場合は会話中のためmentionHoonkでは対応しない
+			let exist : AiChatHist | null = null;
+			if (conversationData != undefined) {
+				for (const message of conversationData) {
+					exist = this.aichatHist.findOne({
+						postId: message.id
+					});
+					if (exist != null) return false;
+				}
 			}
 		}
 
@@ -610,27 +615,40 @@ export default class extends Module {
 		this.log('contextHook...');
 		if (msg.text == null) return false;
 
-		// msg.idをもとにnotes/conversationを呼び出し、該当のidかチェック
-		const conversationData = await this.ai.api('notes/conversation', { noteId: msg.id });
-
-		// 結果がnullやサイズ0の場合は終了
-		if (conversationData == null || conversationData.length == 0 ) {
-			this.log('conversationData is nothing.');
-			return false;
-		}
-
-		// aichatHistに該当のポストが見つからない場合は終了
 		let exist : AiChatHist | null = null;
-		for (const message of conversationData) {
+
+		if (msg.isChat) {
+			// チャット(DM)には会話概念が無く、コアのcontexts機構がsubscribeReply時のkey(=aichatHistのpostId)を
+			// そのまま渡してくれるため、notes/conversationのようなAPI呼び出しは不要
 			exist = this.aichatHist.findOne({
-				postId: message.id
+				postId: key
 			});
-			// 見つかった場合はそれを利用
-			if (exist != null) break;
-		}
-		if (exist == null) {
-			this.log('conversationData is not found.');
-			return false;
+			if (exist == null) {
+				this.log('aichatHist entry is not found for this chat context.');
+				return false;
+			}
+		} else {
+			// msg.idをもとにnotes/conversationを呼び出し、該当のidかチェック
+			const conversationData = await this.ai.api('notes/conversation', { noteId: msg.id });
+
+			// 結果がnullやサイズ0の場合は終了
+			if (conversationData == null || conversationData.length == 0 ) {
+				this.log('conversationData is nothing.');
+				return false;
+			}
+
+			// aichatHistに該当のポストが見つからない場合は終了
+			for (const message of conversationData) {
+				exist = this.aichatHist.findOne({
+					postId: message.id
+				});
+				// 見つかった場合はそれを利用
+				if (exist != null) break;
+			}
+			if (exist == null) {
+				this.log('conversationData is not found.');
+				return false;
+			}
 		}
 
 		// 見つかった場合はunsubscribe&removeし、回答。今回のでsubscribe,insert,timeout設定
@@ -809,7 +827,8 @@ export default class extends Module {
 					msg.reply(serifs.aichat.nothing(exist.type));
 					return false;
 				}
-				const base64Files: base64File[] = await this.note2base64File(msg.id);
+				// チャット(DM)の添付ファイルは今のところ未対応(ノートの添付のみ画像として渡す)
+				const base64Files: base64File[] = msg.isChat ? [] : await this.note2base64File(msg.id);
 				aiChat = {
 					question: question,
 					prompt: prompt,
@@ -852,7 +871,8 @@ export default class extends Module {
 					msg.reply(serifs.aichat.nothing(exist.type));
 					return false;
 				}
-				const openaiFiles: base64File[] = await this.note2base64File(msg.id);
+				// チャット(DM)の添付ファイルは今のところ未対応(ノートの添付のみ画像として渡す)
+				const openaiFiles: base64File[] = msg.isChat ? [] : await this.note2base64File(msg.id);
 				aiChat = {
 					question: question,
 					prompt: prompt,
@@ -900,8 +920,8 @@ export default class extends Module {
 
 			this.log('Subscribe&Set Timer...');
 
-			// メンションをsubscribe
-			this.subscribeReply(reply.id, reply.id);
+			// メンション(またはチャット)をsubscribe
+			this.subscribeReply(reply.id, msg.isChat, msg.isChat ? msg.userId : reply.id);
 
 			// タイマーセット
 			this.setTimeoutWithPersistence(TIMEOUT_TIME, {
