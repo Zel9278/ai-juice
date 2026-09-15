@@ -72,9 +72,10 @@ promiseRetry(retry => {
 	log('Starting AiOS...');
 
 	// 藍起動
+	// AiChatModuleは、チャット(DM)では明示的なキーワード無しでも応答するフォールバックとして
+	// 動作するため、他のキーワード制モジュールに判定の機会を譲れるよう最後に登録する
 	new 藍(account, [
 		new CoreModule(),
-		new AiChatModule(),
 		new ReminderModule(),
 		new TalkModule(),
 		new CheckCustomEmojisModule(),
@@ -98,6 +99,7 @@ promiseRetry(retry => {
 		new SleepReportModule(),
 		new NotingModule(),
 		new PollModule(),
+		new AiChatModule(),
 	]);
 }).catch(e => {
 	log(chalk.red('Failed to fetch the account'));

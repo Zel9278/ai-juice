@@ -120,6 +120,9 @@ export default class extends Module {
 	private aichatHist: loki.Collection<AiChatHist>;
 	private randomTalkProbability: number = RANDOMTALK_DEFAULT_PROBABILITY;
 	private randomTalkIntervalMinutes: number = RANDOMTALK_DEFAULT_INTERVAL;
+	// handleAiChat実行中(APIへの問い合わせ〜返信送信まで)のユーザーIDを保持し、
+	// 応答待ちの間に同じユーザーから追加メッセージが来ても二重に問い合わせないようにする
+	private processingUsers: Set<string> = new Set();
 
 	@bindThis
 	public install() {
@@ -545,10 +548,22 @@ export default class extends Module {
 
 	@bindThis
 	private async mentionHook(msg: Message) {
-		if (!msg.includes([this.name])) {
+		if (msg.isChat) {
+			// チャット(DM)は1対1でボット宛であることが自明なため、"aichat"キーワードを要求しない。
+			// 他の全モジュールのmentionHookが先に判定を済ませた上でここまで来ているため、
+			// 空でない本文があればそのままaichatの対象とする(明示的なエンジン指定は下記の判定で拾う)。
+			if (msg.extractedText == null || msg.extractedText.length === 0) return false;
+			this.log('AiChat requested (chat)');
+		} else if (!msg.includes([this.name])) {
 			return false;
 		} else {
 			this.log('AiChat requested');
+		}
+
+		// 同じユーザーからの応答待ちリクエストが既に処理中の場合、二重に問い合わせない
+		if (this.processingUsers.has(msg.userId)) {
+			this.log('Already processing a request for this user. Skipping.');
+			return false;
 		}
 
 		// チャット(DM)にはノートのようなスレッド概念が無いため、この時点で会話中かどうかは
@@ -600,7 +615,13 @@ export default class extends Module {
 			];
 		}
 		// AIに問い合わせ
-		const result = await this.handleAiChat(current, msg);
+		this.processingUsers.add(msg.userId);
+		let result: boolean;
+		try {
+			result = await this.handleAiChat(current, msg);
+		} finally {
+			this.processingUsers.delete(msg.userId);
+		}
 
 		if (result) {
 			return {
@@ -614,6 +635,13 @@ export default class extends Module {
 	private async contextHook(key: any, msg: Message) {
 		this.log('contextHook...');
 		if (msg.text == null) return false;
+
+		// 同じユーザーからの応答待ちリクエストが既に処理中の場合、二重に問い合わせない
+		// (unsubscribeReplyはこの後すぐ行われるため、代わりにこのフラグで多重実行を防ぐ)
+		if (this.processingUsers.has(msg.userId)) {
+			this.log('Already processing a request for this user. Skipping.');
+			return false;
+		}
 
 		let exist : AiChatHist | null = null;
 
@@ -663,7 +691,13 @@ export default class extends Module {
 		this.aichatHist.remove(exist);
 
 		// AIに問い合わせ
-		const result = await this.handleAiChat(exist, msg);
+		this.processingUsers.add(msg.userId);
+		let result: boolean;
+		try {
+			result = await this.handleAiChat(exist, msg);
+		} finally {
+			this.processingUsers.delete(msg.userId);
+		}
 
 		if (result) {
 			return {
