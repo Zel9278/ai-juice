@@ -8,6 +8,14 @@ import Message from '@/message.js';
 export default class extends Module {
 	public readonly name = 'maze';
 
+	private readonly difficulties = [
+		{ key: 'veryEasy', label: '激かんたん' },
+		{ key: 'easy', label: 'かんたん' },
+		{ key: 'normal', label: 'ふつう' },
+		{ key: 'hard', label: 'むずかしい' },
+		{ key: 'veryHard', label: '激ムズ' },
+	];
+
 	@bindThis
 	public install() {
 		this.post();
@@ -29,11 +37,12 @@ export default class extends Module {
 		this.setData(data);
 
 		this.log('Time to maze');
-		const file = await this.genMazeFile(date);
+		const difficulty = this.difficulties[Math.floor(Math.random() * this.difficulties.length)];
+		const file = await this.genMazeFile(date, difficulty.key);
 
 		this.log('Posting...');
 		this.ai.post({
-			text: serifs.maze.post,
+			text: serifs.maze.post(difficulty.label),
 			fileIds: [file.id]
 		});
 	}
