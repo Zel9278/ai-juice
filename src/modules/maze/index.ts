@@ -35,10 +35,11 @@ export default class extends Module {
 
 	@bindThis
 	private async post() {
-		const now = new Date();
-		const slot = this.postSlots.find(s => s.hour === now.getHours());
+		// サーバーのシステムタイムゾーンに関係なく、常にJST(UTC+9)基準で判定する
+		const jst = new Date(Date.now() + 9 * 60 * 60 * 1000);
+		const slot = this.postSlots.find(s => s.hour === jst.getUTCHours());
 		if (slot == null) return;
-		const date = `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}`;
+		const date = `${jst.getUTCFullYear()}-${jst.getUTCMonth()}-${jst.getUTCDate()}`;
 		const key = `${date}-${slot.hour}`;
 		const data = this.getData();
 		if (data.lastPosted == key) return;
