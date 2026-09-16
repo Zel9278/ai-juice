@@ -78,6 +78,7 @@ export default class Message {
 		cw?: string;
 		renote?: string;
 		immediate?: boolean;
+		isAIGenerated?: boolean;
 	}) {
 		if (text == null) return;
 
@@ -98,7 +99,8 @@ export default class Message {
 				text: text,
 				fileIds: opts?.file ? [opts?.file.id] : undefined,
 				cw: opts?.cw,
-				renoteId: opts?.renote
+				renoteId: opts?.renote,
+				isAIGenerated: opts?.isAIGenerated
 			});
 		}
 	}

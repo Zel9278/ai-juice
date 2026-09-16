@@ -1035,7 +1035,7 @@ export default class extends Module {
 		}
 
 		this.log('Replying...');
-		msg.reply(serifs.aichat.post(text, exist.type)).then(reply => {
+		msg.reply(serifs.aichat.post(text, exist.type), { isAIGenerated: true }).then(reply => {
 			// 履歴に登録
 			if (!exist.history) {
 				exist.history = [];
