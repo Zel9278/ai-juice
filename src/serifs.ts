@@ -372,7 +372,7 @@ export default {
 	},
 
 	maze: {
-		post: (difficulty: string) => `今日の迷路です！ 難易度: ${difficulty} #AiMaze`,
+		post: (timeOfDay: string, difficulty: string) => `${timeOfDay}の迷路です！ 難易度: ${difficulty} #AiMaze`,
 		foryou: '描きました！'
 	},
 

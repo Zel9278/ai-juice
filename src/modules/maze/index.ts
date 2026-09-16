@@ -17,6 +17,12 @@ export default class extends Module {
 		{ key: 'ai', label: '藍本気' },
 	];
 
+	private readonly postSlots = [
+		{ hour: 8, label: '朝' },
+		{ hour: 12, label: '昼' },
+		{ hour: 20, label: '晩' },
+	];
+
 	@bindThis
 	public install() {
 		this.post();
@@ -30,20 +36,22 @@ export default class extends Module {
 	@bindThis
 	private async post() {
 		const now = new Date();
-		if (now.getHours() !== 22) return;
+		const slot = this.postSlots.find(s => s.hour === now.getHours());
+		if (slot == null) return;
 		const date = `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}`;
+		const key = `${date}-${slot.hour}`;
 		const data = this.getData();
-		if (data.lastPosted == date) return;
-		data.lastPosted = date;
+		if (data.lastPosted == key) return;
+		data.lastPosted = key;
 		this.setData(data);
 
 		this.log('Time to maze');
 		const difficulty = this.difficulties[Math.floor(Math.random() * this.difficulties.length)];
-		const file = await this.genMazeFile(date, difficulty.key);
+		const file = await this.genMazeFile(key, difficulty.key);
 
 		this.log('Posting...');
 		this.ai.post({
-			text: serifs.maze.post(difficulty.label),
+			text: serifs.maze.post(slot.label, difficulty.label),
 			fileIds: [file.id]
 		});
 	}
