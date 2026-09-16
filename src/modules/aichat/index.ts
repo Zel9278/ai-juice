@@ -271,6 +271,8 @@ export default class extends Module {
 				key: aiChat.key,
 			},
 			json: geminiOptions,
+			// POSTはgot既定では自動リトライされないため、一時的な接続断(socket hang up等)に備えて明示的に有効化
+			retry: { limit: 2, methods: ['POST' as const] },
 		};
 
 		this.log(JSON.stringify(options));
@@ -348,6 +350,8 @@ export default class extends Module {
 					{role: 'user', content: aiChat.question},
 				],
 			},
+			// POSTはgot既定では自動リトライされないため、一時的な接続断(socket hang up等)に備えて明示的に有効化
+			retry: { limit: 2, methods: ['POST' as const] },
 		};
 		this.log(JSON.stringify(options));
 		let res_data:any = null;
@@ -478,6 +482,8 @@ export default class extends Module {
 						// 最終ラウンドはツール呼び出しをさせず、必ずテキストで返答させる
 						...(tools.length > 0 && !isLastRound ? { tools: tools } : {}),
 					},
+					// POSTはgot既定では自動リトライされないため、一時的な接続断(socket hang up等)に備えて明示的に有効化
+					retry: { limit: 2, methods: ['POST' as const] },
 				};
 				this.log(JSON.stringify(options));
 				const res_data: any = await got.post(options,
