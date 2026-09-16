@@ -125,6 +125,9 @@ export default class extends Module {
 	// handleAiChat実行中(APIへの問い合わせ〜返信送信まで)のユーザーIDを保持し、
 	// 応答待ちの間に同じユーザーから追加メッセージが来ても二重に問い合わせないようにする
 	private processingUsers: Set<string> = new Set();
+	// サーバーバージョン情報のキャッシュ(毎回api/metaを叩かないよう一定時間使い回す)
+	private cachedServerVersion: { version: string; fetchedAt: number } | null = null;
+	private readonly SERVER_VERSION_CACHE_MS = 1000 * 60 * 5;
 
 	@bindThis
 	public install() {
@@ -577,6 +580,27 @@ export default class extends Module {
 	}
 
 	@bindThis
+	private async getServerVersion(): Promise<string | null> {
+		// 一定時間はキャッシュを使い回し、質問のたびにapi/metaを叩かないようにする
+		if (this.cachedServerVersion != null && Date.now() - this.cachedServerVersion.fetchedAt < this.SERVER_VERSION_CACHE_MS) {
+			return this.cachedServerVersion.version;
+		}
+		try {
+			const meta: any = await this.ai.api('meta', {});
+			if (typeof meta?.version === 'string' && meta.version.length > 0) {
+				this.cachedServerVersion = { version: meta.version, fetchedAt: Date.now() };
+				return meta.version;
+			}
+		} catch (err: unknown) {
+			this.log('Failed to fetch server version via api/meta');
+			if (err instanceof Error) {
+				this.log(`${err.name}\n${err.message}`);
+			}
+		}
+		return null;
+	}
+
+	@bindThis
 	private async resolveEmojiImages(text: string): Promise<{ file: base64File; name: string }[]> {
 		// :name: または :name@host: 形式のカスタム絵文字ショートコードを抽出(重複除去、上限あり)
 		const EMOJI_SHORTCODE_REGEX = /:([a-zA-Z0-9_+-]+)(?:@([a-zA-Z0-9.-]+))?:/g;
@@ -871,6 +895,11 @@ export default class extends Module {
 		let prompt: string = '';
 		if (config.prompt) {
 			prompt = config.prompt;
+		}
+		// このJuice Serverのバージョンを伝えておく(聞かれたときに正しく答えられるように)
+		const serverVersion = await this.getServerVersion();
+		if (serverVersion != null) {
+			prompt += 'また、このJuice Serverの現在のバージョンは' + serverVersion + 'です。バージョンを聞かれた場合はこの値をそのまま答えてください(自分でAPIを叩く必要があるかのような案内はしないこと)。';
 		}
 		const reName = RegExp(this.name, 'i');
 		let reKigoType = RegExp(KIGO + exist.type, 'i');
