@@ -14,6 +14,7 @@ export default class extends Module {
 		{ key: 'normal', label: 'ふつう' },
 		{ key: 'hard', label: 'むずかしい' },
 		{ key: 'veryHard', label: '激ムズ' },
+		{ key: 'ai', label: '藍本気' },
 	];
 
 	@bindThis
