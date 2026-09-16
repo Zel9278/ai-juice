@@ -18,9 +18,9 @@ export default class extends Module {
 	];
 
 	private readonly postSlots = [
-		{ hour: 8, label: '朝' },
-		{ hour: 12, label: '昼' },
-		{ hour: 20, label: '晩' },
+		{ hour: 7, label: '朝' },
+		{ hour: 13, label: '昼' },
+		{ hour: 19, label: '晩' },
 	];
 
 	@bindThis
