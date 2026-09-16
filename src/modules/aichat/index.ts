@@ -466,58 +466,72 @@ export default class extends Module {
 			this.log(`MCP tools available: ${tools.map(t => t.function.name).join(', ')}`);
 		}
 
-		// ツール呼び出し(function calling)のラウンドトリップ上限。無限ループ防止用
-		const MAX_TOOL_ROUNDS = 5;
-		try {
-			for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
-				const isLastRound = round === MAX_TOOL_ROUNDS;
-				let options = {
-					url: aiChat.api,
-					headers: {
-						Authorization: 'Bearer ' + aiChat.key,
-					},
-					json: {
-						model: config.openaiModel ?? OPENAI_DEFAULT_MODEL,
-						messages: messages,
-						// 最終ラウンドはツール呼び出しをさせず、必ずテキストで返答させる
-						...(tools.length > 0 && !isLastRound ? { tools: tools } : {}),
-					},
-					// POSTはgot既定では自動リトライされないため、一時的な接続断(socket hang up等)に備えて明示的に有効化
-					retry: { limit: 2, methods: ['POST' as const] },
-				};
-				this.log(JSON.stringify(options));
-				const res_data: any = await got.post(options,
+		// LLM本体へのリクエストを1回投げる。gotのretryを使い切ってもなお失敗した場合はnullを返す
+		const requestOnce = async (withTools: boolean): Promise<any> => {
+			const options = {
+				url: aiChat.api,
+				headers: {
+					Authorization: 'Bearer ' + aiChat.key,
+				},
+				json: {
+					model: config.openaiModel ?? OPENAI_DEFAULT_MODEL,
+					messages: messages,
+					...(withTools && tools.length > 0 ? { tools: tools } : {}),
+				},
+				// POSTはgot既定では自動リトライされないため、一時的な接続断(socket hang up等)に備えて明示的に有効化
+				retry: { limit: 2, methods: ['POST' as const] },
+			};
+			this.log(JSON.stringify(options));
+			try {
+				const res_data = await got.post(options,
 					{parseJson: (res: string) => JSON.parse(res)}).json();
 				this.log(JSON.stringify(res_data));
-
-				const message = res_data?.choices?.[0]?.message;
-				if (message == null) return null;
-
-				const toolCalls: OpenAiToolCall[] | undefined = message.tool_calls;
-				if (toolCalls == null || toolCalls.length === 0) {
-					return message.content ?? null;
+				return res_data;
+			} catch (err: unknown) {
+				this.log('Error By Call OpenAI-compatible API');
+				if (err instanceof Error) {
+					this.log(`${err.name}\n${err.message}\n${err.stack}`);
 				}
-
-				// アシスタントのツール呼び出し要求を履歴に積む
-				messages.push({ role: 'assistant', content: message.content ?? null, tool_calls: toolCalls });
-
-				// 各ツールを実行し、結果をtoolロールのメッセージとして積む
-				for (const toolCall of toolCalls) {
-					this.log(`MCP tool call: ${toolCall.function.name}(${toolCall.function.arguments})`);
-					let args: Record<string, unknown> = {};
-					try {
-						args = JSON.parse(toolCall.function.arguments || '{}');
-					} catch {
-						// 引数のJSONが壊れている場合は空引数として扱う
-					}
-					const toolResultText = await callMcpTool(toolCall.function.name, args);
-					messages.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResultText });
-				}
+				return null;
 			}
-		} catch (err: unknown) {
-			this.log('Error By Call OpenAI-compatible API');
-			if (err instanceof Error) {
-				this.log(`${err.name}\n${err.message}\n${err.stack}`);
+		};
+
+		// ツール呼び出し(function calling)のラウンドトリップ上限。無限ループ防止用
+		const MAX_TOOL_ROUNDS = 5;
+		for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
+			const isLastRound = round === MAX_TOOL_ROUNDS;
+
+			let res_data = await requestOnce(!isLastRound);
+			if (res_data == null) {
+				// gotのretryを使い切ってもなお失敗した場合、ツール指定を外したシンプルな形で最後にもう一度だけ試す
+				// (ツール呼び出し指定自体が原因で不安定になっているケースへの対策)
+				this.log('Retrying once without tool definitions as a fallback...');
+				res_data = await requestOnce(false);
+			}
+			if (res_data == null) return null;
+
+			const message = res_data?.choices?.[0]?.message;
+			if (message == null) return null;
+
+			const toolCalls: OpenAiToolCall[] | undefined = message.tool_calls;
+			if (toolCalls == null || toolCalls.length === 0) {
+				return message.content ?? null;
+			}
+
+			// アシスタントのツール呼び出し要求を履歴に積む
+			messages.push({ role: 'assistant', content: message.content ?? null, tool_calls: toolCalls });
+
+			// 各ツールを実行し、結果をtoolロールのメッセージとして積む
+			for (const toolCall of toolCalls) {
+				this.log(`MCP tool call: ${toolCall.function.name}(${toolCall.function.arguments})`);
+				let args: Record<string, unknown> = {};
+				try {
+					args = JSON.parse(toolCall.function.arguments || '{}');
+				} catch {
+					// 引数のJSONが壊れている場合は空引数として扱う
+				}
+				const toolResultText = await callMcpTool(toolCall.function.name, args);
+				messages.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResultText });
 			}
 		}
 		return null;
