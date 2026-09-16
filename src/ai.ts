@@ -45,7 +45,7 @@ export default class 藍 {
 	public account: User;
 	public connection: Stream;
 	public modules: Module[] = [];
-	private mentionHooks: MentionHook[] = [];
+	private mentionHooks: { moduleName: string; handler: MentionHook }[] = [];
 	private contextHooks: { [moduleName: string]: ContextHook } = {};
 	private timeoutCallbacks: { [moduleName: string]: TimeoutCallback } = {};
 	public db: loki;
@@ -222,7 +222,7 @@ export default class 藍 {
 			m.init(this);
 			const res = m.install();
 			if (res != null) {
-				if (res.mentionHook) this.mentionHooks.push(res.mentionHook);
+				if (res.mentionHook) this.mentionHooks.push({ moduleName: m.name, handler: res.mentionHook });
 				if (res.contextHook) this.contextHooks[m.name] = res.contextHook;
 				if (res.timeoutCallback) this.timeoutCallbacks[m.name] = res.timeoutCallback;
 			}
@@ -269,7 +269,17 @@ export default class 藍 {
 		const invokeMentionHooks = async () => {
 			let res: boolean | HandlerResult | null = null;
 
-			for (const handler of this.mentionHooks) {
+			// 「aichat」と明示された場合は、他モジュールの横取り(挨拶・バージョン確認など)より
+			// aichatモジュールを優先して試す
+			const wantsAiChat = msg.text != null && msg.includes(['aichat']);
+			const orderedHooks = wantsAiChat
+				? [
+					...this.mentionHooks.filter(h => h.moduleName === 'aichat'),
+					...this.mentionHooks.filter(h => h.moduleName !== 'aichat'),
+				]
+				: this.mentionHooks;
+
+			for (const { handler } of orderedHooks) {
 				res = await handler(msg);
 				if (res === true || typeof res === 'object') break;
 			}
