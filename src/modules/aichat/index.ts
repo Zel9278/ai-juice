@@ -110,6 +110,7 @@ const GEMINI_20_FLASH_API = 'https://generativelanguage.googleapis.com/v1beta/mo
 // const GEMINI_15_FLASH_API = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
 const GEMINI_15_PRO_API = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent';
 const PLAMO_API = 'https://platform.preferredai.jp/api/completion/v1/chat/completions';
+const PLAMO_MODEL = 'plamo-beta';
 const OPENAI_DEFAULT_API = 'https://api.openai.com/v1/chat/completions';
 const OPENAI_DEFAULT_MODEL = 'gpt-4o-mini';
 
@@ -347,7 +348,7 @@ export default class extends Module {
 				Authorization: 'Bearer ' + aiChat.key
 			},
 			json: {
-				model: 'plamo-beta',
+				model: PLAMO_MODEL,
 				messages: [
 					{role: 'system', content: aiChat.prompt},
 					{role: 'user', content: aiChat.question},
@@ -578,6 +579,12 @@ export default class extends Module {
 			}
 		}
 		return files;
+	}
+
+	@bindThis
+	private describeSelfModel(model: string, reasoningEffort: string | null): string {
+		const effortText = reasoningEffort ?? '指定なし(API側の既定値)';
+		return 'また、あなたの返答を生成しているAIモデルは' + model + 'で、推論の強さ(reasoning effort)は' + effortText + 'です。使っているモデルやeffortを聞かれた場合は、この値をそのまま答えてください。';
 	}
 
 	@bindThis
@@ -979,6 +986,7 @@ export default class extends Module {
 				if (exist.grounding) {
 					aiChat.grounding = exist.grounding;
 				}
+				aiChat.prompt += this.describeSelfModel(aiChat.api.match(/\/models\/([^:/]+):/)?.[1] ?? aiChat.api, null);
 				text = await this.genTextByGemini(aiChat, base64Files);
 				break;
 
@@ -997,6 +1005,7 @@ export default class extends Module {
 					friendName: friendName,
 					fromMention: exist.fromMention
 				};
+				aiChat.prompt += this.describeSelfModel(PLAMO_MODEL, null);
 				text = await this.genTextByPLaMo(aiChat);
 				break;
 
@@ -1021,6 +1030,7 @@ export default class extends Module {
 					fromMention: exist.fromMention,
 					emojiNames: openaiEmojis.map(e => e.name),
 				};
+				aiChat.prompt += this.describeSelfModel(config.openaiModel ?? OPENAI_DEFAULT_MODEL, config.openaiReasoningEffort ?? null);
 				text = await this.genTextByOpenAI(aiChat, openaiFiles);
 				break;
 
