@@ -8,7 +8,7 @@ import urlToBase64 from '@/utils/url2base64.js';
 import urlToJson from '@/utils/url2json.js';
 import buildDocsContext from '@/modules/aichat/docsContext.js';
 import { listOpenAiTools, callMcpTool } from '@/modules/aichat/mcpClient.js';
-import got from 'got';
+import got, { HTTPError } from 'got';
 import loki from 'lokijs';
 
 type AiChat = {
@@ -113,6 +113,15 @@ const PLAMO_API = 'https://platform.preferredai.jp/api/completion/v1/chat/comple
 const PLAMO_MODEL = 'plamo-beta';
 const OPENAI_DEFAULT_API = 'https://api.openai.com/v1/chat/completions';
 const OPENAI_DEFAULT_MODEL = 'gpt-4o-mini';
+
+// ログにAPIキーを残さないよう、Authorizationヘッダーと?key=を伏せ字にしてからJSON化する
+function stringifyRequestForLog(options: { headers?: Record<string, string>; searchParams?: Record<string, string> }): string {
+	return JSON.stringify({
+		...options,
+		...(options.headers?.Authorization != null ? { headers: { ...options.headers, Authorization: '***' } } : {}),
+		...(options.searchParams?.key != null ? { searchParams: { ...options.searchParams, key: '***' } } : {}),
+	});
+}
 
 const RANDOMTALK_DEFAULT_PROBABILITY = 0.02;// デフォルトのrandomTalk確率
 const TIMEOUT_TIME = 1000 * 60 * 60 * 0.5;// aichatの返信を監視する時間
@@ -279,7 +288,7 @@ export default class extends Module {
 			retry: { limit: 2, methods: ['POST' as const] },
 		};
 
-		this.log(JSON.stringify(options));
+		this.log(stringifyRequestForLog(options));
 		let res_data:any = null;
 		let responseText:string = '';
 		try {
@@ -334,6 +343,9 @@ export default class extends Module {
 			if (err instanceof Error) {
 				this.log(`${err.name}\n${err.message}\n${err.stack}`);
 			}
+			if (err instanceof HTTPError) {
+				this.log(`Response body: ${String(err.response.body).slice(0, 2000)}`);
+			}
 		}
 		return responseText;
 	}
@@ -357,7 +369,7 @@ export default class extends Module {
 			// POSTはgot既定では自動リトライされないため、一時的な接続断(socket hang up等)に備えて明示的に有効化
 			retry: { limit: 2, methods: ['POST' as const] },
 		};
-		this.log(JSON.stringify(options));
+		this.log(stringifyRequestForLog(options));
 		let res_data:any = null;
 		try {
 			res_data = await got.post(options,
@@ -376,6 +388,9 @@ export default class extends Module {
 			this.log('Error By Call PLaMo');
 			if (err instanceof Error) {
 				this.log(`${err.name}\n${err.message}\n${err.stack}`);
+			}
+			if (err instanceof HTTPError) {
+				this.log(`Response body: ${String(err.response.body).slice(0, 2000)}`);
 			}
 		}
 		return null;
@@ -486,7 +501,7 @@ export default class extends Module {
 				// POSTはgot既定では自動リトライされないため、一時的な接続断(socket hang up等)に備えて明示的に有効化
 				retry: { limit: 2, methods: ['POST' as const] },
 			};
-			this.log(JSON.stringify(options));
+			this.log(stringifyRequestForLog(options));
 			try {
 				const res_data = await got.post(options,
 					{parseJson: (res: string) => JSON.parse(res)}).json();
@@ -496,6 +511,9 @@ export default class extends Module {
 				this.log('Error By Call OpenAI-compatible API');
 				if (err instanceof Error) {
 					this.log(`${err.name}\n${err.message}\n${err.stack}`);
+				}
+				if (err instanceof HTTPError) {
+					this.log(`Response body: ${String(err.response.body).slice(0, 2000)}`);
 				}
 				return null;
 			}
