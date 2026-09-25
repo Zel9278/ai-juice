@@ -479,6 +479,7 @@ export default class extends Module {
 				json: {
 					model: config.openaiModel ?? OPENAI_DEFAULT_MODEL,
 					messages: messages,
+					...(config.openaiReasoningEffort ? { reasoning_effort: config.openaiReasoningEffort } : {}),
 					...(withTools && tools.length > 0 ? { tools: tools } : {}),
 				},
 				// POSTはgot既定では自動リトライされないため、一時的な接続断(socket hang up等)に備えて明示的に有効化

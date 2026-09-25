@@ -17,6 +17,7 @@ type Config = {
 	openaiApiKey?: string;
 	openaiApiUrl?: string;
 	openaiModel?: string;
+	openaiReasoningEffort?: string;
 	prompt?: string;
 	aichatRandomTalkEnabled?: boolean;
 	aichatRandomTalkProbability?: string;
