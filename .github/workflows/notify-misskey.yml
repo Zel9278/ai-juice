@@ -75,10 +75,12 @@ jobs:
               exit 0
               ;;
           esac
+          # 区切りの文字列は毎回ランダムにする(投稿文に同じ行を含めて、出力を書き換えられないように)
+          DELIMITER="MSGEOF_$(openssl rand -hex 16)"
           {
-            echo "text<<MSGEOF"
+            echo "text<<$DELIMITER"
             echo "$TEXT"
-            echo "MSGEOF"
+            echo "$DELIMITER"
           } >> "$GITHUB_OUTPUT"
 
       - name: Post to Misskey
